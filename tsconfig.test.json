@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "./tests",
+    "paths": {
+      "@/*": ["../src/*"],
+      "@modules/*": ["../src/modules/*"],
+      "@common/*": ["../src/common/*"],
+      "@config/*": ["../src/common/config/*"],
+      "@guards/*": ["../src/common/guards/*"],
+      "@database/*": ["../src/database/*"],
+      "@entities/*": ["../src/database/entities/*"],
+      "./email.service": ["../src/modules/email/email.service"],
+      "./email.dto": ["../src/modules/email/email.dto"],
+      "../adapters/*": ["../src/modules/adapters/*"],
+      "../queue/*": ["../src/modules/queue/*"],
+      "../../database/*": ["../src/database/*"],
+      "../../src/*": ["../src/*"]
+    }
+  },
+  "include": ["tests/**/*"]
+}
