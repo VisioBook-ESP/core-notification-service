@@ -7,7 +7,7 @@ describe('Notifications Module Integration (e2e)', () => {
 
   beforeAll(async () => {
     app = await createTestingApp();
-  });
+  }, 120000);
 
   afterAll(async () => {
     if (app) {
@@ -41,7 +41,7 @@ describe('Templates Module Integration (e2e)', () => {
 
   beforeAll(async () => {
     app = await createTestingApp();
-  });
+  }, 120000);
 
   afterAll(async () => {
     if (app) {

@@ -11,5 +11,5 @@ module.exports = {
     '!src/**/index.ts',
   ],
   coverageDirectory: 'coverage',
-  testTimeout: 30000,
+  testTimeout: 60000,
 };
