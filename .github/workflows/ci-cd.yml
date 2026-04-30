@@ -98,9 +98,9 @@ jobs:
       - name: Wait for service to be healthy
         run: |
           for i in {1..30}; do
-            if curl -sf http://localhost:8088/health; then
+            if curl -sf http://localhost:8088/api/v1/health; then
               echo "Service is healthy!"
-              curl http://localhost:8088/ready
+              curl http://localhost:8088/api/v1/ready
               exit 0
             fi
             echo "Waiting for service... ($i/30)"
