@@ -10,6 +10,7 @@ import { EmailModule } from './modules/email/email.module';
 import { PushModule } from './modules/push/push.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { TemplatesModule } from './modules/templates/templates.module';
+import { NatsModule } from './modules/nats/nats.module';
 import { NotificationEntity, EmailTemplateEntity, DeviceTokenEntity } from './database/entities';
 
 @Module({
@@ -46,6 +47,7 @@ import { NotificationEntity, EmailTemplateEntity, DeviceTokenEntity } from './da
     PushModule,
     NotificationsModule,
     TemplatesModule,
+    NatsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,11 +1,21 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Connect NATS microservice (listens to events from other services)
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.NATS,
+    options: {
+      servers: [process.env.NATS_URL || 'nats://localhost:4222'],
+      queue: 'notifications', // queue group for horizontal scaling
+    },
+  });
 
   // Enable CORS
   app.enableCors({
@@ -47,10 +57,12 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  // Start the application
+  // Start NATS microservice transport then HTTP server
+  await app.startAllMicroservices();
   const port = process.env.PORT || 8088;
   await app.listen(port);
   console.log(`🚀 Core Notification Service running on port ${port}`);
+  console.log(`📡 NATS listener connected to ${process.env.NATS_URL || 'nats://localhost:4222'}`);
 }
 
 bootstrap();

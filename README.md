@@ -1,87 +1,147 @@
 # Core Notification Service
 
-> 📧 Email • 🔔 Push Notifications • 📲 In-App Messages
+> 📧 Email • 🔔 Push Notifications • 📲 In-App Messages • 📡 NATS Event-Driven
 
 A scalable microservice for managing all types of notifications in the VisioBook platform.
+Other services trigger notifications by **publishing NATS events** — no HTTP calls needed.
 
-## 🎯 Features for Backend Services
+## 🎯 Features
 
 ### 📧 Email Notifications
 - **SendGrid Integration** - Enterprise-grade email delivery
-- **Template System** - 9+ pre-built templates with variable substitution
+- **Template System** - Pre-built templates with variable substitution
 - **Batch Processing** - Send multiple emails efficiently
 - **Retry Logic** - Automatic retries with exponential backoff
-- **Duplicate Prevention** - Smart deduplication across requests
 - **Queue Monitoring** - Real-time queue stats and health metrics
 
 **Available Templates:**
-- Email verification
-- Password reset
-- Welcome emails
-- Payment receipts
-- Account notifications
-- And more...
+- `email_verification` — Email verification code
+- `password_reset` — Password reset link
+- `welcome` — New user welcome
+- `generation_complete` — Content generation ready
+- `generation_failed` — Generation failure notice
+- `payment_confirmation` — Payment receipt
+- `subscription_cancelled` — Subscription cancellation
 
 ### 🔔 Push Notifications
-- **Firebase Cloud Messaging** - Multi-platform push support
-- **iOS & Android** - Native app notifications
-- **Web Push** - Browser notifications
-- **Topic-based Broadcasting** - Send to groups of users/topics
-- **Device Management** - Track & manage registered devices
+- **Firebase Cloud Messaging** - Multi-platform push support (iOS, Android, Web)
+- **Topic-based Broadcasting** - Send to groups of users
+- **Device Management** - Track & manage registered tokens
 - **Rich Notifications** - Custom data, images, and deep linking
 
-### 📱 In-App Notifications
+### 📲 In-App Notifications
 - **Database Storage** - Persistent notification history
-- **Real-time Access** - Instant notification retrieval
-- **Pagination** - Efficient handling of large notification lists
-- **Read Status Tracking** - Track read/unread notifications
-- **Deep Linking** - Action URLs for app navigation
-- **Type System** - Categorized notifications (payment, message, alert, etc.)
+- **Read Status Tracking** - Track read/unread per user
+- **Pagination** - Efficient handling of large lists
+- **Typed notifications** - `generation_complete`, `generation_failed`, `share_received`, `payment_confirmed`, `system_announcement`
+
+### 📡 NATS Event Listener
+- **Event-driven** — subscribes to events published by other VisioBook services
+- **Queue group** `notifications` — safe for horizontal scaling (each event delivered once)
+- **Generic subjects** — any service can request email, push, or in-app directly
+- **Domain subjects** — reacts automatically to business events (payment, generation, etc.)
 
 ### 🔐 Security & Reliability
-- **API Key Authentication** - Service-to-service communication
-- **JWT Support** - User-facing endpoints
-- **Rate Limiting** - Prevent abuse and resource exhaustion
-- **Error Handling** - Comprehensive error codes and messages
-- **Async Processing** - Non-blocking notification sending
-- **Health Checks** - Service availability monitoring
+- **JWT** — user-facing endpoints (reading, marking as read, device registration)
+- **API Key** — direct HTTP fallback for service-to-service calls
+- **Async Processing** — Bull + Redis queue for non-blocking delivery
+- **Health Checks** — PostgreSQL, Redis, and HTTP liveness probes
 
-## 📦 System Architecture
+## 📦 Architecture
 
 ```
-┌──────────────────────────────────┐
-│   External Services              │
-│ (Auth, User, Payment, etc)       │
-└────────────┬─────────────────────┘
-             │ HTTP + API Key/JWT
-             ▼
-┌──────────────────────────────────┐
-│ Core Notification Service        │
-│ ┌────────────────────────────┐   │
-│ │ Email │ Push │ In-App      │   │
-│ │ Controllers                │   │
-│ └────────┬─────────┬─────────┘   │
-│          │         │              │
-│          ▼         ▼              │
-│ ┌─────────────────────────────┐  │
-│ │ Bull Queue (Redis)          │  │
-│ │ - Async Processing          │  │
-│ │ - Retry with Backoff        │  │
-│ │ - Job Monitoring            │  │
-│ └─────┬───────────────────────┘  │
-│       │                           │
-│       ▼                           │
-│ ┌─────────────────────────────┐  │
-│ │ Adapters                    │  │
-│ │ - SendGrid (Email)          │  │
-│ │ - Firebase (Push)           │  │
-│ │ - PostgreSQL (In-App)       │  │
-│ └─────────────────────────────┘  │
-└──────────────────────────────────┘
-         │          │      │
-         ▼          ▼      ▼
-    SendGrid   Firebase  PostgreSQL
-    (Email)    (Push)    (Storage)
+┌──────────────────────────────────────────────────────────────┐
+│                  Other VisioBook Services                     │
+│        (core-user-service, core-payment-service, …)          │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ publish NATS events
+                            ▼
+                   ┌─────────────────┐
+                   │   NATS Server   │  nats://nats:4222
+                   └────────┬────────┘
+                            │ subscribe (queue group: notifications)
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│                Core Notification Service                      │
+│                                                               │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │  NATS Controller  (@EventPattern handlers)           │    │
+│  │  Generic: send.email · send.push · create.in_app     │    │
+│  │  Domain:  payment.confirmed · generation.completed   │    │
+│  │           generation.failed · content.shared         │    │
+│  │           user.registered · user.password_reset…     │    │
+│  └────────────────────────┬─────────────────────────────┘    │
+│                           │                                   │
+│  ┌────────────────────────▼─────────────────────────────┐    │
+│  │  Services: EmailService · PushService · Notifications │    │
+│  └────────────────────────┬─────────────────────────────┘    │
+│                           │                                   │
+│  ┌────────────────────────▼─────────────────────────────┐    │
+│  │  Bull Queue (Redis) — async, retry with backoff       │    │
+│  └────────────────────────┬─────────────────────────────┘    │
+│                           │                                   │
+│  ┌────────────────────────▼─────────────────────────────┐    │
+│  │  Adapters: SendGrid · Firebase · PostgreSQL           │    │
+│  └──────────────────────────────────────────────────────┘    │
+│                                                               │
+│  HTTP (still available)                                       │
+│  ├── JWT  → GET/PATCH/DELETE /notifications, /push/subscribe  │
+│  └── API Key → POST /email/send, /push/send, /notifications   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## 📡 NATS Integration
+
+### How other services publish events
+
+Install the `nats` package in the publishing service, then:
+
+```typescript
+// NestJS example — inject ClientProxy configured with Transport.NATS
+this.natsClient.emit('payment.confirmed', {
+  userId: 'uuid',
+  userEmail: 'user@example.com',
+  amount: 29.99,
+  currency: 'EUR',
+  paymentId: 'pay-xxx',
+});
+```
+
+### Subjects reference
+
+#### Generic (direct notification request)
+
+| Subject | Payload |
+|---------|---------|
+| `notifications.send.email` | `{ to, subject, body, attachments? }` |
+| `notifications.send.template_email` | `{ to, templateId, data }` |
+| `notifications.send.push` | `{ userId, title, body, data?, imageUrl? }` |
+| `notifications.create.in_app` | `{ userId, type, title, body, data? }` |
+
+#### Domain events (VisioBook business events)
+
+| Subject | Payload | Triggers |
+|---------|---------|----------|
+| `user.registered` | `{ userId, email, name, verificationToken? }` | Verification email |
+| `user.password_reset_requested` | `{ userId, email, resetToken }` | Reset email |
+| `payment.confirmed` | `{ userId, userEmail, amount, currency, paymentId }` | Receipt email + push + in-app |
+| `generation.completed` | `{ userId, userEmail, generationId, title }` | Email + push + in-app |
+| `generation.failed` | `{ userId, generationId, reason? }` | Push + in-app |
+| `content.shared` | `{ userId, sharedByName, contentId }` | Push + in-app |
+
+All subject constants are in [src/modules/nats/nats.events.ts](./src/modules/nats/nats.events.ts).
+
+### Testing NATS locally
+
+```bash
+# Fire a test event (uses the nats npm package, no extra tools needed)
+node scripts/test-nats.mjs
+
+# See all available test subjects
+# Then fire one:
+node scripts/test-nats.mjs payment.confirmed
+node scripts/test-nats.mjs notifications.send.email
+node scripts/test-nats.mjs generation.completed
 ```
 
 ## 🚀 Quick Start
@@ -89,27 +149,24 @@ A scalable microservice for managing all types of notifications in the VisioBook
 ### Prerequisites
 - Docker & Docker Compose
 - Node.js 18+
-- PostgreSQL 15+
-- Redis 7+
 - SendGrid API Key
 - Firebase Credentials
 
 ### Local Development
 
 ```bash
-# Clone and install
-git clone <repo>
-cd core-notification-service
-npm install
+# Install dependencies
+npm install --legacy-peer-deps
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your credentials
+# Fill in SENDGRID_API_KEY, Firebase credentials, JWT_SECRET
 
-# Start services
-docker compose up
+# Start everything (NATS + Postgres + Redis + service)
+docker compose up --build
 
-# Service runs on http://localhost:8088
+# Service: http://localhost:8088
+# NATS:    nats://localhost:4222  (monitoring: http://localhost:8222)
 ```
 
 ### Environment Variables
@@ -122,16 +179,19 @@ LOG_LEVEL=debug
 
 # Database
 DATABASE_HOST=postgres
-DATABASE_PORT=5433
+DATABASE_PORT=5432
 DATABASE_USER=visiobook
 DATABASE_PASSWORD=visiobook_dev_password
 DATABASE_NAME=notifications_db
 
-# Redis
+# Redis (Bull queue)
 REDIS_HOST=redis
 REDIS_PORT=6379
 
-# JWT
+# NATS
+NATS_URL=nats://nats:4222
+
+# JWT (user-facing endpoints)
 JWT_SECRET=your-secret-key
 JWT_EXPIRATION=24h
 
@@ -144,205 +204,98 @@ FIREBASE_PROJECT_ID=visiobook-xxx
 FIREBASE_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxx@visiobook-xxx.iam.gserviceaccount.com
 
-# API Keys (comma-separated for service-to-service auth)
-VALID_API_KEYS=service1-key,service2-key,service3-key
+# API Keys (comma-separated, for direct HTTP fallback)
+VALID_API_KEYS=service1-key,service2-key
 ```
 
-## 📚 API Reference
+## 📚 HTTP API Reference
 
-### Email Endpoints
+HTTP endpoints remain available as a fallback or for direct calls.
 
-**Send Email**
+### Email
+
 ```bash
-POST /api/v1/email/send
-X-API-Key: your-api-key
-
-{
-  "to": "user@example.com",
-  "subject": "Welcome!",
-  "body": "<h1>Welcome to VisioBook</h1>",
-  "priority": "high"
-}
+POST /api/v1/email/send              # X-API-Key — queue raw email
+POST /api/v1/email/send-template     # X-API-Key — queue template email
+POST /api/v1/email/send-batch        # X-API-Key — queue batch emails
+GET  /api/v1/email/queue/stats       # queue statistics
+GET  /api/v1/email/templates         # list templates
 ```
 
-**Send Template Email**
+### Push Notifications
+
 ```bash
-POST /api/v1/email/send-template
-X-API-Key: your-api-key
-
-{
-  "to": "user@example.com",
-  "templateId": "verification-email",
-  "variables": {
-    "code": "123456",
-    "expiresIn": "15 minutes"
-  }
-}
-```
-
-### Push Notification Endpoints
-
-**Subscribe Device**
-```bash
-POST /api/v1/push/subscribe
-Authorization: Bearer {jwt-token}
-
-{
-  "deviceId": "device-123",
-  "platform": "ios",
-  "token": "firebase-token-from-app"
-}
-```
-
-**Send Push Notification**
-```bash
-POST /api/v1/push/send
-X-API-Key: your-api-key
-
-{
-  "userId": "user-uuid",
-  "title": "New Message",
-  "body": "You have a new message",
-  "data": {
-    "messageId": "msg-123"
-  }
-}
+POST   /api/v1/push/subscribe              # Bearer JWT — register device token
+DELETE /api/v1/push/unsubscribe/:deviceId  # Bearer JWT — remove device
+GET    /api/v1/push/devices                # Bearer JWT — list user devices
+POST   /api/v1/push/send                   # X-API-Key — send push to user
+POST   /api/v1/push/topic/send             # X-API-Key — broadcast to topic
 ```
 
 ### In-App Notifications
 
-**Create Notification**
 ```bash
-POST /api/v1/notifications
-X-API-Key: your-api-key
-
-{
-  "userId": "user-uuid",
-  "title": "Payment Received",
-  "message": "Payment of $100 confirmed",
-  "type": "payment",
-  "actionUrl": "/payments/receipt/123"
-}
+GET    /api/v1/notifications           # Bearer JWT — list user notifications
+GET    /api/v1/notifications/:id       # Bearer JWT — get single
+PATCH  /api/v1/notifications/:id/read  # Bearer JWT — mark as read
+PATCH  /api/v1/notifications/read-all  # Bearer JWT — mark all as read
+DELETE /api/v1/notifications/:id       # Bearer JWT — delete
+GET    /api/v1/notifications/unread/count  # Bearer JWT — unread count
+POST   /api/v1/notifications           # X-API-Key — create (service only)
 ```
 
-**List User Notifications**
+See [docs/api-reference.md](./docs/api-reference.md) for full request/response schemas.
+
+## 🔗 Backend Service Integration
+
+### Recommended: NATS (event-driven)
+
+1. Configure a NATS client in your service pointing to the shared NATS server
+2. Publish events using the subjects from the [table above](#subjects-reference)
+3. No API key or HTTP call needed
+
+### Fallback: HTTP + API Key
+
 ```bash
-GET /api/v1/notifications?page=1&limit=20
-Authorization: Bearer {jwt-token}
-```
-
-See [API Reference](./docs/api-reference.md) for complete endpoint documentation.
-
-## 🔐 Authentication
-
-### Service-to-Service (API Key)
-For backend services sending notifications:
-
-```bash
-curl -X POST http://localhost:8088/api/v1/email/send \
+curl -X POST http://core-notification-service:8088/api/v1/email/send \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{...}'
+  -d '{ "to": "user@example.com", "subject": "Hello", "body": "<p>Hi</p>" }'
 ```
 
-### User-Facing (JWT)
-For user mobile/web apps:
-
-```bash
-curl -X GET http://localhost:8088/api/v1/notifications \
-  -H "Authorization: Bearer your-jwt-token"
-```
-
-## 🔗 Backend Service Integration Guide
-
-**👉 START HERE for integrating this service into your backend:**
-
-### Step 1: Quick Overview (5 min)
-- Read [API Quick Reference](./docs/API_QUICK_REFERENCE.md) - Endpoint cheatsheet
-- Skim [Documentation Complete](./docs/DOCUMENTATION_COMPLETE.md) - What's available
-
-### Step 2: Integration Setup (30 min)
-- Follow [Service Integration Checklist](./docs/SERVICE_INTEGRATION_CHECKLIST.md) - Step-by-step
-- Get your API Key from DevOps
-- Copy code from [Integration Guide](./docs/integration-guide.md) - Node.js, Python, Go examples
-
-### Step 3: Implementation (1-2 hours)
-- Find your use case in [Common Patterns](./docs/COMMON_INTEGRATION_PATTERNS.md) - Real-world examples:
-  - User registration with email verification
-  - Payment confirmation notifications
-  - Batch newsletter sending
-  - Real-time messaging
-  - Admin announcements
-  - And more...
-- Test each notification type (email, push, in-app)
-
-### Step 4: Troubleshooting & Production
-- If issues: Check [Troubleshooting Integration](./docs/TROUBLESHOOTING_INTEGRATION.md) - 20+ solutions
-- Deploy to production with confidence
-- Monitor queue stats: `/email/queue/stats` and `/push/queue/stats`
-
-## �📱 Client Integration
-
-### Web App
-See [Web Integration Guide](./docs/web-integration.md)
-
-### iOS App
-See [iOS Integration Guide](./docs/ios-integration.md)
-
-### Android App
-See [Android Integration Guide](./docs/android-integration.md)
-
-## 🛠 Deployment
-
-See [Deployment Guide](./docs/deployment-guide.md) for production deployment instructions.
-
-## 📖 Documentation
-
-### 🚀 Getting Started
-- [API Quick Reference](./docs/API_QUICK_REFERENCE.md) - Quick endpoint lookup
-- [Service Integration Checklist](./docs/SERVICE_INTEGRATION_CHECKLIST.md) - Checklist for backend services
-- [Integration Guide](./docs/integration-guide.md) - Code examples and implementation guide
-- [Common Integration Patterns](./docs/COMMON_INTEGRATION_PATTERNS.md) - Real-world usage patterns
-
-### 📋 Reference
-- [Architecture Guide](./docs/ARCHITECTURE_GUIDE.md) - System design and flows
-- [API Reference](./docs/api-reference.md) - Complete endpoint documentation
-- [Authentication](./docs/authentication.md) - Auth strategies and guards
-- [Database Schema](./docs/DATABASE.md) - Database entities and migrations
-
-### 🛠 Operations
-- [Deployment Guide](./docs/deployment-guide.md) - Production deployment instructions
-- [Troubleshooting](./docs/troubleshooting.md) - Service troubleshooting
-- [Troubleshooting Integration](./docs/TROUBLESHOOTING_INTEGRATION.md) - Integration issues
-- [Testing Guide](./docs/testing.md) - Running tests
-
-### 📱 Client Integration
-- [iOS Integration](./docs/ios-integration.md) - iOS app integration
-- [Android Integration](./docs/android-integration.md) - Android app integration
+See [docs/COMMON_INTEGRATION_PATTERNS.md](./docs/COMMON_INTEGRATION_PATTERNS.md) for real-world examples.
 
 ## 🧪 Health Check
 
 ```bash
 curl http://localhost:8088/api/v1/health
-
-# Response
-{
-  "status": "ok",
-  "timestamp": "2026-04-23T13:49:57.295Z",
-  "service": "core-notification-service"
-}
+# { "status": "ok", "timestamp": "...", "service": "core-notification-service" }
 ```
 
 ## 📊 Monitoring
 
-### Queue Statistics
 ```bash
+# Queue stats
 curl http://localhost:8088/api/v1/email/queue/stats
 curl http://localhost:8088/api/v1/push/queue/stats
+
+# NATS monitoring (JetStream HTTP)
+curl http://localhost:8222/varz
 ```
 
-### Database Health
-Service includes automatic PostgreSQL and Redis health checks in Docker.
+## 📖 Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [Architecture Guide](./docs/ARCHITECTURE_GUIDE.md) | System design & flows |
+| [API Reference](./docs/api-reference.md) | Complete endpoint docs |
+| [Common Integration Patterns](./docs/COMMON_INTEGRATION_PATTERNS.md) | Real-world usage examples |
+| [Authentication](./docs/authentication.md) | Auth strategies |
+| [Database Schema](./docs/DATABASE.md) | Entities & migrations |
+| [Deployment Guide](./docs/deployment-guide.md) | Production setup |
+| [Testing Guide](./docs/testing.md) | Running tests |
+| [iOS Integration](./docs/ios-integration.md) | iOS push setup |
+| [Android Integration](./docs/android-integration.md) | Android push setup |
 
 ## 🤝 Contributing
 
@@ -350,4 +303,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ## 📄 License
 
-Private - VisioBook Project
+Private — VisioBook Project
